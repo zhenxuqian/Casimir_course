@@ -1,0 +1,112 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+fs = 1e6
+file_path = "signal.txt"
+signal = pd.read_csv(file_path, delimiter="\t", header=None)
+
+# offset compensation
+total_signal = np.sum(signal.iloc[0:30, 0])  # noise part
+mean_signal = total_signal / len(range(0, 30))  # mean value of noise
+signal = signal - mean_signal  # compensation
+
+# plot signal before and after offset compensation
+t = np.linspace(1000000/fs, 500000000/fs, 500)
+plt.plot(t, signal_ini, label='Before offset compensation')
+plt.plot(t, signal, '--', label='After offset compensation')
+plt.legend()
+plt.xlim(0, 100)
+plt.ylim(-0.1, 0.1)
+plt.xlabel('Time [μs]')
+plt.ylabel('Amplitude [V]')
+plt.savefig('offset.png')
+plt.show()
+
+# plot signal in time domain
+t = np.linspace(1000000/fs, 500000000/fs, 500)
+plt.plot(t, signal)
+plt.xlabel('Time [μs]')
+plt.ylabel('Amplitude [V]')
+plt.savefig('time_domain.png')
+plt.show()
+
+# Fourier transform
+N = len(signal)  # length of signal
+spectrum = np.zeros(N, dtype=complex)
+for k in range(N):  # frequency
+    for j in range(N):  # intergral
+        spectrum[k] += signal.iloc[j, 0] * np.exp( -1j * 2 * np.pi * k * j / N )
+conjugate = np.real(spectrum) - 1j * np.imag(spectrum)  # function: real and imaginary
+spectrum_amp = np.sqrt(spectrum * conjugate)
+
+# comparison between fft in matlab
+file_path = "fft_matlab.txt"
+fft_matlab = pd.read_csv(file_path, delimiter="\t", header=None)
+fre = np.linspace(fs/(500*1000), fs/1000, 500)
+plt.plot(fre, fft_matlab, label='MATLAB')
+plt.plot(fre, spectrum_amp, '--', label='Our calculation')
+plt.legend()
+plt.xlim(0, 250)
+plt.xlabel('Frequency [kHz]')
+plt.ylabel('Amplitude')
+plt.savefig('fre_domain.png')
+plt.show()
+
+# wavelet filterbank design
+frange = [50, 500e3]  # frequency range
+wrange = ( np.array(frange) * 1 / fs * 2 * np.pi )  # convert frequencies in Hz to normalized radians
+nv = 10  # filter fineness
+a0 = 2 ** (1 / nv)
+ad_con = 6  # set to 6 to satisfy the admissibility condition
+s0 = ad_con / wrange[1]
+smax = ad_con / wrange[0]
+num_octave = np.log2(smax / s0)
+scales = s0 * a0 ** np.arange(nv * num_octave)
+frequency_scale = 500e3 / a0 ** np.arange(133)  # frequency scale
+omega = np.arange(1, N // 2 + 1)
+omega = omega * (2 * np.pi) / N
+omega_re = omega[::-1]
+omega_final = np.concatenate(([0], omega, -omega_re[0:249]))
+somega = scales[:, np.newaxis] * omega_final
+nor_amplitude = 2  # normalized amplitude to 2
+squareterm = (somega - ad_con) * (somega - ad_con)
+gaussexp = -squareterm / 2
+expnt = gaussexp * (somega > 0)
+cwt_filter = nor_amplitude * np.exp(expnt) * (somega > 0)
+
+# plot fiterbank
+num_columns = cwt_filter.shape[0]
+for n in range(num_columns):
+    plt.plot(fre, cwt_filter[n, :])
+plt.xlim(0, 500)
+plt.xlabel('Frequency [kHz]')
+plt.ylabel('Amplitude')
+plt.savefig('filterbank.png')
+plt.show()
+
+# obtain the CWT in the Fourier domain
+cfsposdft = spectrum * cwt_filter
+
+# transform the CWT back to time domain
+cfs_ifft = np.zeros((133, N))
+# stupid loop, needs to be optimized
+for i in range(133):
+    for j in range(N):
+        for k in range(N):
+            cfs_ifft[i, j] += cfsposdft[i, k] * np.exp(1j * 2 * np.pi * k * j / N )
+cfs_ifft /= N  # scale the signal
+fre_i = np.real(cfs_ifft)
+
+# plot the real part of signal with frequency of 268 kHz
+file_path = "fre_268kHz.txt"
+fre_268kHz = pd.read_csv(file_path, delimiter="\t", header=None)
+t = np.linspace(1000000/fs, 500000000/fs, 500)
+plt.plot(t, fre_268kHz, label='MATLAB')
+plt.plot(t, fre_i[10,:], '--', label='Our calculation')
+plt.legend()
+plt.xlim(20, 250)
+plt.xlabel('Time [μs]')
+plt.ylabel('Amplitude [V]')
+plt.savefig('fre_268kHz.png')
+plt.show()
